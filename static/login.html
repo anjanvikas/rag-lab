@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — RAG Learning Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #050810; --bg2: #090d1a;
+      --accent: #63b3ed; --accent2: #9f7aea;
+      --text: #e8edf5; --text-dim: #8892a4; --text-dimmer: #4a5568;
+      --border: rgba(255,255,255,0.08);
+      --surface: rgba(255,255,255,0.04);
+      --success: #68d391;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .bg-orbs {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    }
+    .orb {
+      position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.15;
+    }
+    .orb1 { width: 500px; height: 500px; background: var(--accent); top: -100px; left: -100px; animation: drift 8s ease-in-out infinite; }
+    .orb2 { width: 400px; height: 400px; background: var(--accent2); bottom: -100px; right: -100px; animation: drift 10s ease-in-out infinite reverse; }
+    @keyframes drift { 0%,100%{transform:translate(0,0)} 50%{transform:translate(30px,20px)} }
+
+    .card {
+      position: relative; z-index: 1;
+      background: rgba(13,18,37,0.9);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 48px 52px;
+      width: 440px;
+      text-align: center;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+      animation: slideUp 0.5s ease;
+    }
+    @keyframes slideUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+
+    .logo {
+      width: 64px; height: 64px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 30px;
+      margin: 0 auto 20px;
+      box-shadow: 0 8px 32px rgba(99,179,237,0.3);
+    }
+    h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px; }
+    .sub { font-size: 14px; color: var(--text-dim); margin-bottom: 36px; line-height: 1.6; }
+
+    .google-btn {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      width: 100%;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 14px 20px;
+      color: var(--text);
+      font-size: 15px; font-weight: 600; font-family: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .google-btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.2);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .google-icon {
+      width: 22px; height: 22px;
+    }
+
+    .features {
+      margin-top: 36px;
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      text-align: left;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .feature-icon { font-size: 16px; }
+
+    .divider {
+      height: 1px; background: var(--border); margin: 28px 0 20px;
+    }
+    .privacy {
+      font-size: 11px; color: var(--text-dimmer);
+      line-height: 1.6;
+    }
+    .error-msg {
+      background: rgba(252,129,129,0.1);
+      border: 1px solid rgba(252,129,129,0.3);
+      color: #fc8181;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-orbs">
+    <div class="orb orb1"></div>
+    <div class="orb orb2"></div>
+  </div>
+
+  <div class="card">
+    <div class="logo">🧠</div>
+    <h1>RAG Learning Platform</h1>
+    <p class="sub">Understand how Retrieval-Augmented Generation works — from embeddings to production pipelines.</p>
+
+    <div id="error-area"></div>
+
+    <a href="/auth/login" class="google-btn">
+      <svg class="google-icon" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Continue with Google
+    </a>
+
+    <div class="features">
+      <div class="feature"><span class="feature-icon">📚</span>Interactive Learn Hub</div>
+      <div class="feature"><span class="feature-icon">🔍</span>Live RAG Pipeline</div>
+      <div class="feature"><span class="feature-icon">📊</span>Vector Embeddings</div>
+      <div class="feature"><span class="feature-icon">🔗</span>Knowledge Graph</div>
+    </div>
+
+    <div class="divider"></div>
+    <p class="privacy">Your API key is encrypted at rest. We only store your Google profile info and an encrypted copy of your Anthropic API key.</p>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error');
+    if (err) {
+      document.getElementById('error-area').innerHTML =
+        `<div class="error-msg">⚠️ ${decodeURIComponent(err)}</div>`;
+    }
+  </script>
+</body>
+</html>

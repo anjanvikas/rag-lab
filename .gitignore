@@ -1,0 +1,28 @@
+# Environment variables
+.env
+.env.example
+! .env.example
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Databases
+chroma_db/
+rag_users.db
+*.sqlite3
+
+# OS files
+.DS_Store
+
+# Temporary files
+1#
+*.swp
+*.log

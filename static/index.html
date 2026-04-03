@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ArXiv AI Research Chat</title>
+    <meta name="description" content="AI-powered research assistant for ArXiv papers with hybrid retrieval and cross-encoder reranking." />
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+        *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+        :root {
+            --bg: #0f1117; --surface: #1a1d27; --surface2: #23273a;
+            --border: #2d3348; --text: #e4e6f0; --text2: #9ba1b7;
+            --accent: #6c63ff; --accent2: #4fc3f7; --accent-glow: rgba(108,99,255,.15);
+            --success: #4caf50; --warn: #ff9800; --error: #f44336;
+            --radius: 12px; --font: 'Inter', -apple-system, sans-serif;
+        }
+        html, body { height:100%; font-family:var(--font); background:var(--bg); color:var(--text); }
+        #root { height:100%; }
+
+        /* ── Layout ─────────────────────────────────── */
+        .app { display:flex; height:100vh; }
+        .sidebar {
+            width:280px; min-width:280px; background:var(--surface);
+            border-right:1px solid var(--border); display:flex; flex-direction:column;
+            overflow:hidden;
+        }
+        .main { flex:1; display:flex; flex-direction:column; min-width:0; }
+        .trace-panel {
+            width:340px; min-width:340px; background:var(--surface);
+            border-left:1px solid var(--border); overflow-y:auto; padding:16px;
+        }
+
+        /* ── Sidebar ────────────────────────────────── */
+        .sidebar-header {
+            padding:20px 16px; border-bottom:1px solid var(--border);
+        }
+        .sidebar-header h1 {
+            font-size:18px; font-weight:700; color:var(--accent2);
+            display:flex; align-items:center; gap:10px;
+        }
+        .sidebar-header h1 .icon { font-size:24px; }
+        .sidebar-sub { font-size:12px; color:var(--text2); margin-top:4px; }
+
+        .features {
+            display:flex; flex-wrap:wrap; gap:6px; padding:12px 16px;
+            border-bottom:1px solid var(--border);
+        }
+        .feature-tag {
+            font-size:10px; padding:3px 8px; border-radius:20px;
+            background:var(--accent-glow); color:var(--accent); font-weight:600;
+        }
+
+        .search-box {
+            margin:12px 16px; padding:8px 12px;
+            background:var(--surface2); border:1px solid var(--border);
+            border-radius:var(--radius); color:var(--text); font-size:13px;
+            width:calc(100% - 32px); outline:none;
+        }
+        .search-box:focus { border-color:var(--accent); }
+
+        .papers-label {
+            padding:8px 16px; font-size:11px; font-weight:700;
+            color:var(--text2); text-transform:uppercase; letter-spacing:1px;
+            display:flex; justify-content:space-between; align-items:center;
+        }
+        .papers-count {
+            background:var(--accent); color:#fff; font-size:10px;
+            padding:2px 8px; border-radius:10px;
+        }
+
+        .papers-list {
+            flex:1; overflow-y:auto; padding:0 8px 8px;
+        }
+        .paper-item {
+            padding:10px 12px; border-radius:8px; cursor:pointer;
+            margin-bottom:4px; transition:background .15s;
+        }
+        .paper-item:hover { background:var(--surface2); }
+        .paper-item.selected { background:var(--accent-glow); border-left:3px solid var(--accent); }
+        .paper-title { font-size:13px; font-weight:500; line-height:1.3; }
+        .paper-meta { font-size:11px; color:var(--text2); margin-top:3px; }
+
+        .sidebar-footer { padding:12px 16px; border-top:1px solid var(--border); }
+        .new-chat-btn {
+            width:100%; padding:10px; background:var(--surface2);
+            border:1px solid var(--border); border-radius:var(--radius);
+            color:var(--text); font-size:13px; cursor:pointer;
+            font-weight:600; transition:all .15s;
+        }
+        .new-chat-btn:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+        /* ── Header ─────────────────────────────────── */
+        .header {
+            padding:16px 24px; border-bottom:1px solid var(--border);
+            display:flex; align-items:center; justify-content:space-between;
+            background:var(--surface);
+        }
+        .header-left h2 { font-size:16px; font-weight:700; }
+        .header-left p { font-size:12px; color:var(--text2); margin-top:2px; }
+        .header-right { display:flex; align-items:center; gap:12px; }
+        .mode-btn {
+            padding:6px 14px; border-radius:20px; border:1px solid var(--border);
+            background:var(--surface2); color:var(--text2);
+            font-size:12px; cursor:pointer; transition:all .15s; font-weight:500;
+        }
+        .mode-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+        /* ── Chat area ──────────────────────────────── */
+        .chat-area { flex:1; overflow-y:auto; padding:20px 24px; }
+
+        .message { display:flex; gap:12px; margin-bottom:16px; max-width:800px; }
+        .message.user { flex-direction:row-reverse; margin-left:auto; }
+        .message-avatar {
+            width:32px; height:32px; border-radius:50%; flex-shrink:0;
+            display:flex; align-items:center; justify-content:center;
+            font-size:14px; font-weight:700;
+        }
+        .message.assistant .message-avatar { background:linear-gradient(135deg, var(--accent), var(--accent2)); color:#fff; }
+        .message.user .message-avatar { background:var(--surface2); color:var(--text2); }
+
+        .message-body {
+            padding:12px 16px; border-radius:var(--radius); max-width:680px;
+            line-height:1.6; font-size:14px;
+        }
+        .message.assistant .message-body {
+            background:var(--surface); border:1px solid var(--border);
+        }
+        .message.user .message-body {
+            background:linear-gradient(135deg, var(--accent), #7c74ff);
+            color:#fff;
+        }
+        .message-body h1,.message-body h2,.message-body h3 { font-size:15px; font-weight:700; margin:12px 0 6px; color:var(--accent2); }
+        .message-body p { margin-bottom:8px; }
+        .message-body ul, .message-body ol { margin:8px 0; padding-left:20px; }
+        .message-body li { margin-bottom:4px; }
+        .message-body strong { color:var(--accent2); }
+        .message-body code { background:var(--surface2); padding:2px 6px; border-radius:4px; font-size:13px; }
+
+        /* ── Feedback buttons ───────────────────────── */
+        .feedback-bar { display:flex; align-items:center; gap:8px; margin-top:8px; }
+        .feedback-btn {
+            padding:4px 10px; border-radius:16px; border:1px solid var(--border);
+            background:transparent; color:var(--text2); cursor:pointer;
+            font-size:16px; transition:all .15s; display:flex; align-items:center; gap:4px;
+        }
+        .feedback-btn:hover { background:var(--accent-glow); color:var(--accent); border-color:var(--accent); }
+        .feedback-btn.selected { background:var(--accent-glow); color:var(--accent); border-color:var(--accent); }
+        .feedback-btn:disabled { opacity:.5; cursor:default; }
+        .feedback-thanks { font-size:12px; color:var(--success); font-style:italic; }
+
+        /* ── Input bar ──────────────────────────────── */
+        .input-bar {
+            padding:16px 24px; border-top:1px solid var(--border);
+            background:var(--surface);
+        }
+        .input-row { display:flex; gap:12px; max-width:800px; margin:0 auto; }
+        .input-field {
+            flex:1; resize:none; padding:12px 16px;
+            background:var(--surface2); border:1px solid var(--border);
+            border-radius:var(--radius); color:var(--text); font-size:14px;
+            font-family:var(--font); outline:none; min-height:44px; max-height:120px;
+        }
+        .input-field:focus { border-color:var(--accent); }
+        .send-btn {
+            padding:12px 18px; background:var(--accent); border:none;
+            border-radius:var(--radius); color:#fff; cursor:pointer;
+            font-size:16px; transition:all .15s;
+        }
+        .send-btn:hover { background:#5a52e0; }
+        .send-btn:disabled { opacity:.5; cursor:not-allowed; }
+        .session-info { font-size:11px; color:var(--text2); margin-top:6px; text-align:center; }
+
+        /* ── Trace panel ────────────────────────────── */
+        .trace-title { font-size:14px; font-weight:700; margin-bottom:12px; color:var(--accent2); }
+        .trace-step {
+            padding:10px 12px; border-radius:8px; margin-bottom:8px;
+            border:1px solid var(--border); background:var(--surface2);
+        }
+        .trace-step-header {
+            display:flex; align-items:center; gap:8px;
+            font-size:13px; font-weight:600;
+        }
+        .trace-step-num {
+            width:22px; height:22px; border-radius:50%; display:flex;
+            align-items:center; justify-content:center; font-size:11px;
+            font-weight:700;
+        }
+        .trace-step.active .trace-step-num { background:var(--accent); color:#fff; }
+        .trace-step.done .trace-step-num { background:var(--success); color:#fff; }
+        .trace-step.pending .trace-step-num { background:var(--border); color:var(--text2); }
+        .trace-step-detail { font-size:12px; color:var(--text2); margin-top:6px; margin-left:30px; }
+        .trace-model {
+            margin-top:12px; padding:10px 12px; border-radius:8px;
+            background:linear-gradient(135deg, var(--accent-glow), transparent);
+            border:1px solid var(--accent);
+        }
+        .trace-model-name { font-size:13px; font-weight:700; color:var(--accent); }
+        .trace-model-detail { font-size:11px; color:var(--text2); margin-top:4px; }
+
+        /* ── Scrollbar ──────────────────────────────── */
+        ::-webkit-scrollbar { width:6px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+        ::-webkit-scrollbar-thumb:hover { background:var(--text2); }
+
+        /* ── Markdown rendering ─────────────────────── */
+        .md-content h1 { font-size:18px; margin:16px 0 8px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+        .md-content h2 { font-size:16px; margin:14px 0 6px; color:var(--accent2); }
+        .md-content h3 { font-size:14px; margin:12px 0 4px; color:var(--accent2); }
+        .md-content blockquote {
+            border-left:3px solid var(--accent); padding:8px 12px;
+            margin:8px 0; background:var(--accent-glow); border-radius:0 8px 8px 0;
+        }
+
+        /* ── Loading animation ──────────────────────── */
+        @keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+        .typing-indicator span {
+            display:inline-block; width:6px; height:6px; border-radius:50%;
+            background:var(--accent); margin:0 2px;
+            animation:pulse 1.2s ease-in-out infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay:.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay:.4s; }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── Simple Markdown → HTML ────────────────────────────────────────────
+function renderMarkdown(text) {
+    if (!text) return '';
+    let html = text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/^\- (.+)$/gm, '<li>$1</li>')
+        .replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br/>');
+    return '<p>' + html + '</p>';
+}
+
+// ── Feedback Buttons ──────────────────────────────────────────────────
+function FeedbackButtons({ traceId }) {
+    const [submitted, setSubmitted] = useState(null);
+
+    const sendFeedback = async (score) => {
+        setSubmitted(score);
+        try {
+            await fetch('/api/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trace_id: traceId, score, comment: score === 1 ? 'helpful' : 'not helpful' }),
+            });
+        } catch (e) {
+            console.error('Feedback error:', e);
+        }
+    };
+
+    if (!traceId || traceId === 'noop') return null;
+
+    return (
+        <div className="feedback-bar">
+            <button className={`feedback-btn ${submitted === 1 ? 'selected' : ''}`}
+                    onClick={() => sendFeedback(1)} disabled={submitted !== null}>👍</button>
+            <button className={`feedback-btn ${submitted === 0 ? 'selected' : ''}`}
+                    onClick={() => sendFeedback(0)} disabled={submitted !== null}>👎</button>
+            {submitted !== null && <span className="feedback-thanks">Thanks for your feedback!</span>}
+        </div>
+    );
+}
+
+// ── Message Bubble ────────────────────────────────────────────────────
+function MessageBubble({ msg }) {
+    return (
+        <div className={`message ${msg.role}`}>
+            <div className="message-avatar">{msg.role === 'assistant' ? 'AI' : 'U'}</div>
+            <div>
+                <div className="message-body md-content"
+                     dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                {msg.role === 'assistant' && <FeedbackButtons traceId={msg.traceId} />}
+            </div>
+        </div>
+    );
+}
+
+// ── Trace Panel ───────────────────────────────────────────────────────
+function TracePanel({ steps, modelInfo }) {
+    const stepLabels = { rewrite: '⚡ Query Rewriting', retrieve: '🔍 Hybrid Retrieval',
+                         rerank: '🎯 Cross-Encoder Re-ranking', generate: '✨ Model Selection' };
+    return (
+        <div className="trace-panel">
+            <div className="trace-title">🔬 PIPELINE TRACE</div>
+            {Object.entries(stepLabels).map(([key, label], i) => {
+                const step = steps[key];
+                const status = step ? (step.done ? 'done' : 'active') : 'pending';
+                return (
+                    <div key={key} className={`trace-step ${status}`}>
+                        <div className="trace-step-header">
+                            <div className="trace-step-num">{i + 1}</div>
+                            <span>{label}</span>
+                            {step?.detail && <span style={{marginLeft:'auto',fontSize:11,color:'var(--text2)'}}>{step.detail}</span>}
+                        </div>
+                        {step?.detail && <div className="trace-step-detail">{step.detail}</div>}
+                    </div>
+                );
+            })}
+            {modelInfo && (
+                <div className="trace-model">
+                    <div className="trace-model-name">⚡ Claude {modelInfo.model === 'sonnet' ? 'Sonnet 4.5' : 'Haiku 4.5'}</div>
+                    <div className="trace-model-detail">{modelInfo.reason}</div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────
+function App() {
+    const [messages, setMessages] = useState([]);
+    const [input, setInput] = useState('');
+    const [streaming, setStreaming] = useState(false);
+    const [papers, setPapers] = useState([]);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [search, setSearch] = useState('');
+    const [mode, setMode] = useState('vector');
+    const [traceSteps, setTraceSteps] = useState({});
+    const [modelInfo, setModelInfo] = useState(null);
+    const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+    const chatRef = useRef(null);
+
+    // Load papers
+    useEffect(() => {
+        fetch('/api/papers', { credentials: 'include' })
+            .then(r => r.json())
+            .then(data => {
+                const list = data.papers || data;
+                setPapers(Array.isArray(list) ? list : []);
+            })
+            .catch(() => {});
+    }, []);
+
+    // Auto-scroll
+    useEffect(() => {
+        if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    }, [messages]);
+
+    const togglePaper = (id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    };
+
+    const sendMessage = useCallback(async (question) => {
+        if (!question.trim() || streaming) return;
+        setStreaming(true);
+        setTraceSteps({});
+        setModelInfo(null);
+
+        const userMsg = { role: 'user', content: question };
+        setMessages(prev => [...prev, userMsg]);
+        setInput('');
+
+        const assistantMsg = { role: 'assistant', content: '', traceId: null };
+        setMessages(prev => [...prev, assistantMsg]);
+
+        try {
+            const body = {
+                question,
+                selected_ids: [...selectedIds],
+                history: messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
+                session_id: sessionId,
+            };
+
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(body),
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const raw = line.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+
+                    try {
+                        const data = JSON.parse(raw);
+
+                        if (data.step) {
+                            setTraceSteps(prev => ({ ...prev, [data.step]: { done: false } }));
+                        } else if (data.trace) {
+                            for (const [k, v] of Object.entries(data.trace)) {
+                                if (k === 'rewrite') {
+                                    setTraceSteps(prev => ({
+                                        ...prev, rewrite: { done: true, detail: v.rewritten?.slice(0,60) + '...' }
+                                    }));
+                                } else if (k === 'retrieval') {
+                                    setTraceSteps(prev => ({
+                                        ...prev, retrieve: { done: true, detail: `${v.dense_count}+${v.bm25_count}→${v.fused_count}` }
+                                    }));
+                                } else if (k === 'rerank') {
+                                    setTraceSteps(prev => ({
+                                        ...prev, rerank: { done: true, detail: `${v.input_count}→${v.output_count}` }
+                                    }));
+                                } else if (k === 'model') {
+                                    setModelInfo(v);
+                                    setTraceSteps(prev => ({
+                                        ...prev, generate: { done: true, detail: v.model }
+                                    }));
+                                }
+                            }
+                        } else if (data.token) {
+                            setMessages(prev => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                updated[updated.length - 1] = { ...last, content: last.content + data.token };
+                                return updated;
+                            });
+                        } else if (data.done && data.trace_id) {
+                            setMessages(prev => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                updated[updated.length - 1] = { ...last, traceId: data.trace_id };
+                                return updated;
+                            });
+                        } else if (data.error) {
+                            setMessages(prev => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                updated[updated.length - 1] = { ...last, content: `⚠️ ${data.error}` };
+                                return updated;
+                            });
+                        }
+                    } catch {
+                        // raw text token (non-JSON)
+                        setMessages(prev => {
+                            const updated = [...prev];
+                            const last = updated[updated.length - 1];
+                            updated[updated.length - 1] = { ...last, content: last.content + raw };
+                            return updated;
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content: `⚠️ Connection error: ${e.message}` };
+                return updated;
+            });
+        }
+        setStreaming(false);
+    }, [messages, selectedIds, streaming, sessionId, mode]);
+
+    const clearChat = () => {
+        setMessages([]);
+        setTraceSteps({});
+        setModelInfo(null);
+        setSessionId(crypto.randomUUID());
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage(input);
+        }
+    };
+
+    const filteredPapers = papers.filter(p =>
+        !search || p.title?.toLowerCase().includes(search.toLowerCase())
+    );
+
+    return (
+        <div className="app">
+            {/* ── Sidebar ──────────────────────────────── */}
+            <div className="sidebar">
+                <div className="sidebar-header">
+                    <h1><span className="icon">🧠</span> ArXiv RAG Chat</h1>
+                    <div className="sidebar-sub">AI Research Knowledge Base</div>
+                </div>
+                <div className="features">
+                    <span className="feature-tag">⚡ Query Rewriting</span>
+                    <span className="feature-tag">⚡ Re-ranking</span>
+                    <span className="feature-tag">⚡ Multi-turn</span>
+                    <span className="feature-tag">⚡ Streaming</span>
+                </div>
+                <input className="search-box" placeholder="🔍 Search papers..."
+                       value={search} onChange={e => setSearch(e.target.value)} />
+                <div className="papers-label">
+                    PAPERS <span className="papers-count">{papers.length}</span>
+                </div>
+                <div className="papers-list">
+                    {filteredPapers.map(p => (
+                        <div key={p.arxiv_id}
+                             className={`paper-item ${selectedIds.has(p.arxiv_id) ? 'selected' : ''}`}
+                             onClick={() => togglePaper(p.arxiv_id)}>
+                            <div className="paper-title">{p.title}</div>
+                            <div className="paper-meta">{p.year} &middot; {p.category || p.categories}</div>
+                        </div>
+                    ))}
+                </div>
+                <div className="sidebar-footer">
+                    <div style={{fontSize:11,color:'var(--text2)',marginBottom:8,textAlign:'center'}}>
+                        {selectedIds.size > 0 ? `🎯 Filtering: ${selectedIds.size} paper(s)` : '🌐 Searching all papers'}
+                    </div>
+                    <button className="new-chat-btn" onClick={clearChat}>+ New Conversation</button>
+                </div>
+            </div>
+
+            {/* ── Main Chat ────────────────────────────── */}
+            <div className="main">
+                <div className="header">
+                    <div className="header-left">
+                        <h2>AI Research Assistant</h2>
+                        <p>Claude Sonnet 4.5 · Query Rewriting · Cross-encoder Re-ranking · Multi-turn Memory</p>
+                    </div>
+                    <div className="header-right">
+                        <span style={{fontSize:12,color:'var(--text2)'}}>{messages.filter(m=>m.role==='user').length} turn{messages.filter(m=>m.role==='user').length!==1?'s':''}</span>
+                        <button className={`mode-btn ${mode==='vector'?'active':''}`}
+                                onClick={()=>setMode('vector')}>⚡ Pipeline</button>
+                        <button className={`mode-btn ${mode==='kg'?'active':''}`}
+                                onClick={()=>setMode('kg')}>⚡ Vector RAG</button>
+                    </div>
+                </div>
+
+                <div className="chat-area" ref={chatRef}>
+                    {messages.length === 0 && (
+                        <div style={{textAlign:'center',marginTop:'20vh',color:'var(--text2)'}}>
+                            <div style={{fontSize:48,marginBottom:16}}>🧠</div>
+                            <h3 style={{fontSize:18,marginBottom:8,color:'var(--text)'}}>Ask about AI research papers</h3>
+                            <p style={{fontSize:14}}>Try: "What is LoRA?" or "Explain attention mechanisms"</p>
+                        </div>
+                    )}
+                    {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
+                    {streaming && (
+                        <div className="message assistant">
+                            <div className="message-avatar">AI</div>
+                            <div className="message-body typing-indicator">
+                                <span></span><span></span><span></span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="input-bar">
+                    <div className="input-row">
+                        <textarea className="input-field" rows="1"
+                                  placeholder="Ask a question about AI research... (Enter to send, Shift+Enter for newline)"
+                                  value={input} onChange={e => setInput(e.target.value)}
+                                  onKeyDown={handleKeyDown} disabled={streaming} />
+                        <button className="send-btn" onClick={() => sendMessage(input)}
+                                disabled={streaming || !input.trim()}>➤</button>
+                    </div>
+                    <div className="session-info">
+                        🟢 Conversation memory active — {messages.filter(m=>m.role==='user').length} previous turn{messages.filter(m=>m.role==='user').length!==1?'s':''} in context
+                    </div>
+                </div>
+            </div>
+
+            {/* ── Trace Panel ──────────────────────────── */}
+            <TracePanel steps={traceSteps} modelInfo={modelInfo} />
+        </div>
+    );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
