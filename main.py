@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -20,12 +21,19 @@ from auth.routes import router as auth_router, get_current_user, require_auth
 
 # ── Lazy RAG imports (avoid loading models at startup if not needed) ─────────
 _pipeline_loaded = False
+_kg_loaded = False
 
 def _load_pipeline():
     global _pipeline_loaded, rewrite_query, hybrid_retrieve, stream_answer, _get_collection
     if not _pipeline_loaded:
         from rag.pipeline import rewrite_query, hybrid_retrieve, stream_answer, _get_collection
         _pipeline_loaded = True
+
+def _load_kg():
+    global _kg_loaded, kg_retrieve, get_graph_topology, reset_graph
+    if not _kg_loaded:
+        from rag.knowledge_graph import kg_retrieve, get_graph_topology, reset_graph
+        _kg_loaded = True
 
 # ── App setup ────────────────────────────────────────────────────────────────
 app = FastAPI(title="RAG Learning Platform")
@@ -36,6 +44,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# SessionMiddleware is REQUIRED by authlib to store OAuth state between
+# /auth/login redirect and /auth/callback — must come after CORSMiddleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY", "dev-secret-key-change-in-prod"),
+    same_site="lax",
+    https_only=False,
 )
 
 # Initialize DB on startup
@@ -101,6 +118,7 @@ class ChatRequest(BaseModel):
     selected_ids: list[str] = []
     history: list[dict] = []
     session_id: Optional[str] = None
+    mode: str = "vector"  # "vector" | "kg"
 
 
 @app.post("/api/chat")
@@ -134,20 +152,44 @@ async def chat(req: ChatRequest, request: Request, user: dict = Depends(require_
             trace["rewrite"] = rewrite_data
             yield f"data: {json.dumps({'trace': {'rewrite': rewrite_data}})}\n\n"
 
-            # Step 2: Hybrid retrieval
-            yield f"data: {json.dumps({'step': 'retrieve'})}\n\n"
-            retrieval = hybrid_retrieve(
-                rewrite_data["rewritten"],
-                selected_ids=req.selected_ids or None,
-            )
-            trace["retrieval"] = {
-                "dense_count": retrieval["dense_count"],
-                "bm25_count": retrieval["bm25_count"],
-                "fused_count": retrieval["fused_count"],
-                "dense_top": retrieval["dense_top"],
-                "bm25_top": retrieval["bm25_top"],
-                "fused_top": retrieval["fused_top"],
-            }
+            # Step 2: Retrieval (vector or KG)
+            use_kg = req.mode == "kg"
+            if use_kg:
+                _load_kg()
+                yield f"data: {json.dumps({'step': 'kg_build'})}\n\n"
+                retrieval = kg_retrieve(
+                    rewrite_data["rewritten"],
+                    selected_ids=req.selected_ids or None,
+                )
+                trace["retrieval"] = {
+                    "mode": "kg",
+                    "dense_count": retrieval["dense_count"],
+                    "bm25_count": 0,
+                    "fused_count": retrieval["fused_count"],
+                    "dense_top": retrieval["dense_top"],
+                    "bm25_top": [],
+                    "fused_top": retrieval["fused_top"],
+                    "seed_count": retrieval["seed_count"],
+                    "expand_count": retrieval["expand_count"],
+                    "graph_nodes": retrieval["graph_nodes"],
+                    "graph_edges": retrieval["graph_edges"],
+                }
+                yield f"data: {json.dumps({'step': 'kg_expand'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'step': 'retrieve'})}\n\n"
+                retrieval = hybrid_retrieve(
+                    rewrite_data["rewritten"],
+                    selected_ids=req.selected_ids or None,
+                )
+                trace["retrieval"] = {
+                    "mode": "vector",
+                    "dense_count": retrieval["dense_count"],
+                    "bm25_count": retrieval["bm25_count"],
+                    "fused_count": retrieval["fused_count"],
+                    "dense_top": retrieval["dense_top"],
+                    "bm25_top": retrieval["bm25_top"],
+                    "fused_top": retrieval["fused_top"],
+                }
             yield f"data: {json.dumps({'trace': {'retrieval': trace['retrieval']}})}\n\n"
 
             # Step 3: Rerank
@@ -214,6 +256,30 @@ async def feedback(req: FeedbackRequest, user: dict = Depends(require_auth)):
         import logging
         logging.getLogger(__name__).error(f"Feedback error: {e}")
     return {"status": "ok"}
+
+
+# ── Knowledge Graph API ───────────────────────────────────────────────────────
+@app.get("/api/kg/graph")
+async def kg_graph(user: dict = Depends(require_auth)):
+    """Return the full knowledge graph topology for UI visualization."""
+    try:
+        _load_pipeline()  # ensure ChromaDB is ready
+        _load_kg()
+        topology = get_graph_topology(limit_nodes=60)
+        return topology
+    except Exception as e:
+        return {"nodes": [], "edges": [], "total_papers": 0, "total_edges": 0, "error": str(e)}
+
+
+@app.post("/api/kg/reset")
+async def kg_reset(user: dict = Depends(require_auth)):
+    """Force rebuild of the knowledge graph cache."""
+    try:
+        _load_kg()
+        reset_graph()
+        return {"status": "ok", "message": "Graph cache cleared. Will rebuild on next query."}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 # ── Learning Hub APIs ────────────────────────────────────────────────────────
