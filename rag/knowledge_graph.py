@@ -1,370 +1,483 @@
 """
-Knowledge Graph Pipeline — Graph-enhanced RAG retrieval.
+Knowledge Graph RAG Pipeline — Phase B Entity-Centric Architecture.
 
-Architecture:
-  ┌─────────────┐    ┌──────────────────────────────────────┐
-  │  ChromaDB   │───▶│  Knowledge Graph (networkx DiGraph)  │
-  │  (vectors)  │    │  Nodes: papers (arxiv_id, title...)   │
-  └─────────────┘    │  Edges: shared topic keywords          │
-                     └──────────────┬───────────────────────┘
-                                    │
-                     ┌──────────────▼───────────────────────┐
-                     │  KG Retrieval:                        │
-                     │  1. Dense seed (ChromaDB top-k)       │
-                     │  2. Expand via graph neighbours       │
-                     │  3. Cross-encoder rerank expanded set │
-                     └──────────────────────────────────────┘
+Old Architecture (Removed):
+  - Built on ChromaDB (legacy). Expanded via shared keyword edges. Fragile.
+
+New Architecture:
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  User Query                                                          │
+  │       │                                                              │
+  │  [1] Entity Extraction (Claude Haiku)                               │
+  │       │  → ["Transformer", "LoRA", "RLHF", "fine-tuning"]          │
+  │       │                                                              │
+  │  [2] Entity → Paper Lookup (Neo4j)                                  │
+  │       │  MATCH (e:Entity)-[:MENTIONS]-(p:Paper)                     │
+  │       │  → anchor paper set via structured knowledge                │
+  │       │                                                              │
+  │  [3] Dense Seed (Qdrant)                                            │
+  │       │  → top-k papers by embedding similarity                     │
+  │       │                                                              │
+  │  [4] Multi-hop Expansion (Neo4j)                                    │
+  │       │  MATCH (seed)-[:RELATES_TO|USES|EVALUATED_ON]-(neighbor)    │
+  │       │  → traverse 1-2 hops to discover connected concepts         │
+  │       │                                                              │
+  │  [5] Chunk Hydration (Qdrant)                                       │
+  │       │  → fetch actual text chunks for all gathered papers          │
+  │       │                                                              │
+  │  [6] Cross-Encoder Rerank                                           │
+  │       └  → select top-7 most relevant chunks for context            │
+  └─────────────────────────────────────────────────────────────────────┘
+
+WHY THIS APPROACH:
+  - Entity-centric: connects papers via WHAT they talk about, not keyword overlap.
+  - Multi-hop: finds "hidden" connections (e.g. paper A uses Method B, paper C evaluates B).
+  - Grounded: all connections come from LLM-extracted, confidence-filtered facts in Neo4j.
+  - Graceful degradation: falls back to Qdrant-only if Neo4j is unavailable.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
-import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Lazy globals ──────────────────────────────────────────────────────────────
-_graph = None             # networkx DiGraph
-_paper_index: dict = {}   # arxiv_id → paper metadata dict
-_chunk_index: dict = {}   # arxiv_id → list[chunk dict]
+NEO4J_URI      = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER     = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "rag_password")
 
-# Stopwords to exclude from topic-keyword extraction
-_STOPWORDS = {
-    "the", "a", "an", "and", "or", "of", "in", "to", "is", "are", "was", "were", "be",
-    "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "that", "this", "these", "those", "with", "for", "on", "at",
-    "by", "from", "as", "it", "its", "we", "our", "their", "which", "who", "what", "how",
-    "when", "where", "not", "no", "but", "if", "then", "than", "so", "yet", "after",
-    "before", "can", "all", "also", "into", "over", "such", "more", "other", "between",
-    "using", "used", "based", "results", "paper", "model", "models", "method", "methods",
-    "approach", "proposed", "show", "shows", "shown", "novel", "present", "presents",
-    "two", "three", "one", "new", "large", "high", "low", "use", "uses", "data", "task",
-    "tasks", "performance", "training", "learning", "learned", "trained", "work",
-    "works", "provide", "provides", "system", "systems", "research", "neural", "network",
-    "networks", "deep", "study", "analysis", "evaluation", "experiment", "experiments",
-}
+_driver = None
 
 
-# ── Graph construction ────────────────────────────────────────────────────────
+def _get_neo4j_driver():
+    global _driver
+    if _driver is None:
+        try:
+            from neo4j import AsyncGraphDatabase
+            _driver = AsyncGraphDatabase.driver(
+                NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
+            )
+        except Exception as e:
+            logger.warning(f"Neo4j driver init failed: {e}")
+            return None
+    return _driver
 
-def _extract_keywords(text: str, top_n: int = 20) -> set[str]:
-    """Extract meaningful keywords from paper text via frequency + filtering."""
-    words = re.findall(r'\b[a-zA-Z][a-zA-Z\-]{3,}\b', text.lower())
-    freq: dict[str, int] = {}
-    for w in words:
-        if w not in _STOPWORDS and len(w) >= 4:
-            freq[w] = freq.get(w, 0) + 1
-    sorted_words = sorted(freq, key=lambda x: freq[x], reverse=True)
-    return set(sorted_words[:top_n])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Step 1: Entity Extraction
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def extract_query_entities(query: str, api_key: str) -> list[str]:
+    """
+    Use Claude Haiku to extract key AI/ML concepts from the user's query.
+    Returns a list of entity names (normalized to lowercase for Neo4j lookup).
+
+    Example:
+      Query:   "How does LoRA reduce memory usage compared to full fine-tuning?"
+      Returns: ["lora", "fine-tuning", "memory efficiency", "parameter-efficient"]
+    """
+    import anthropic
+
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    prompt = (
+        f"Extract the key AI/ML technical concepts, methods, models, and tasks from this query.\n"
+        f"Return ONLY a JSON array of lowercase strings, e.g. [\"lora\", \"fine-tuning\"].\n"
+        f"Query: {query}"
+    )
+    try:
+        response = await client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=256,
+            temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+        entities = json.loads(text)
+        return [str(e).lower().strip() for e in entities if e][:10]
+    except Exception as e:
+        logger.warning(f"Entity extraction failed: {e}")
+        return []
 
 
-def _build_graph():
-    """Build the knowledge graph from the ChromaDB collection."""
-    global _graph, _paper_index, _chunk_index
+# ══════════════════════════════════════════════════════════════════════════════
+# Step 2 & 4: Neo4j Graph Traversal
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def entity_to_paper_ids_neo4j(entities: list[str]) -> list[str]:
+    """
+    Step 2: Find papers that MENTION any of the extracted entities.
+    Queries: (Entity)-[:MENTIONS]-(Paper)
+
+    Returns a list of arxiv_ids.
+    """
+    driver = _get_neo4j_driver()
+    if not driver or not entities:
+        return []
 
     try:
-        import networkx as nx
-        from rag.pipeline import _get_collection
-    except ImportError as e:
-        logger.error(f"KG graph build failed — missing dependency: {e}")
-        return None
-
-    logger.info("Building knowledge graph from ChromaDB…")
-
-    col = _get_collection()
-    all_data = col.get(include=["documents", "metadatas"])
-
-    docs   = all_data.get("documents", [])
-    metas  = all_data.get("metadatas", [])
-    ids_   = all_data.get("ids", [])
-
-    # ── Index all papers and their chunks ────────────────────────────────────
-    paper_texts: dict[str, str] = {}  # arxiv_id → concatenated chunk text
-
-    for doc_id, text, meta in zip(ids_, docs, metas):
-        arxiv_id = meta.get("arxiv_id", doc_id)
-
-        if arxiv_id not in _paper_index:
-            _paper_index[arxiv_id] = {
-                "arxiv_id": arxiv_id,
-                "title": meta.get("title", "Unknown"),
-                "authors": meta.get("authors", ""),
-                "year": meta.get("year", ""),
-                "category": meta.get("category", ""),
-            }
-            _chunk_index[arxiv_id] = []
-            paper_texts[arxiv_id] = ""
-
-        _chunk_index[arxiv_id].append({
-            "id": doc_id,
-            "text": text,
-            "excerpt": text[:200].strip(),
-            "title": meta.get("title", "Unknown"),
-            "authors": meta.get("authors", ""),
-            "year": meta.get("year"),
-            "arxiv_id": arxiv_id,
-            "chunk_type": meta.get("chunk_type", "body"),
-        })
-        paper_texts[arxiv_id] = paper_texts.get(arxiv_id, "") + " " + text
-
-    if not _paper_index:
-        logger.warning("No papers found in ChromaDB for KG construction")
-        return None
-
-    # ── Extract keywords per paper ────────────────────────────────────────────
-    paper_keywords: dict[str, set[str]] = {}
-    for arxiv_id, text in paper_texts.items():
-        paper_keywords[arxiv_id] = _extract_keywords(text, top_n=25)
-
-    # ── Build graph ──────────────────────────────────────────────────────────
-    G = nx.Graph()  # undirected — relationship is symmetric
-
-    for arxiv_id, meta in _paper_index.items():
-        G.add_node(
-            arxiv_id,
-            title=meta["title"],
-            authors=meta["authors"],
-            year=meta["year"],
-            category=meta["category"],
-        )
-
-    paper_ids = list(_paper_index.keys())
-    edge_threshold = 3  # minimum shared keywords to draw an edge
-
-    for i in range(len(paper_ids)):
-        for j in range(i + 1, len(paper_ids)):
-            a, b = paper_ids[i], paper_ids[j]
-            shared = paper_keywords.get(a, set()) & paper_keywords.get(b, set())
-            if len(shared) >= edge_threshold:
-                weight = len(shared)
-                G.add_edge(a, b, weight=weight, shared_topics=list(shared)[:8])
-
-    logger.info(
-        f"KG built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges"
-    )
-    _graph = G
-    return G
+        async with driver.session() as session:
+            # Match entities by partial name (case insensitive) and find their papers
+            entity_pattern = "|".join(f"(?i).*{e}.*" for e in entities[:5])
+            result = await session.run(
+                """
+                MATCH (e:Entity)
+                WHERE any(pattern IN $patterns WHERE e.name =~ pattern OR e.id =~ pattern)
+                MATCH (p:Paper)-[:MENTIONS]->(e)
+                RETURN DISTINCT p.arxiv_id AS arxiv_id, count(e) AS entity_hits
+                ORDER BY entity_hits DESC
+                LIMIT 15
+                """,
+                patterns=[f"(?i).*{e}.*" for e in entities[:5]],
+            )
+            records = await result.data()
+            return [r["arxiv_id"] for r in records if r.get("arxiv_id")]
+    except Exception as e:
+        logger.warning(f"Neo4j entity lookup failed: {e}")
+        return []
 
 
-def _get_graph():
-    """Return the KG singleton, building it if needed."""
-    global _graph
-    if _graph is None:
-        _build_graph()
-    return _graph
+async def expand_papers_via_graph(seed_arxiv_ids: list[str], hops: int = 2) -> tuple[list[str], list[dict]]:
+    """
+    Step 4: Multi-hop expansion from seed papers via entity relationships.
+    Traverses: (Paper)-[:MENTIONS]->(Entity)<-[:MENTIONS]-(Neighbor)
+    and:        (Entity)-[*1..2]->(RelatedEntity)<-[:MENTIONS]-(Neighbor)
+
+    Returns:
+      - expanded arxiv_ids (including seeds)
+      - edge list for UI visualization
+    """
+    driver = _get_neo4j_driver()
+    if not driver or not seed_arxiv_ids:
+        return seed_arxiv_ids, []
+
+    all_ids = list(seed_arxiv_ids)
+    edges = []
+
+    try:
+        async with driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (seed:Paper)
+                WHERE seed.arxiv_id IN $seed_ids
+                // Expand via shared entity mentions
+                MATCH (seed)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(neighbor:Paper)
+                WHERE neighbor.arxiv_id <> seed.arxiv_id
+                WITH seed, neighbor, e, count(e) AS shared_entities
+                WHERE shared_entities >= 1
+                RETURN
+                    seed.arxiv_id    AS from_id,
+                    neighbor.arxiv_id AS to_id,
+                    collect(e.name)[0..3] AS shared_concepts,
+                    shared_entities
+                ORDER BY shared_entities DESC
+                LIMIT 30
+                """,
+                seed_ids=seed_arxiv_ids,
+            )
+            records = await result.data()
+
+            for r in records:
+                to_id = r.get("to_id")
+                if to_id and to_id not in all_ids:
+                    all_ids.append(to_id)
+                if r.get("from_id") and to_id:
+                    edges.append({
+                        "source": r["from_id"],
+                        "target": to_id,
+                        "shared_concepts": r.get("shared_concepts", []),
+                        "weight": r.get("shared_entities", 1),
+                        "type": "entity_shared",
+                    })
+
+            # Second-hop: entity relationships (USES, EVALUATES, etc.)
+            if hops >= 2 and seed_arxiv_ids:
+                result2 = await session.run(
+                    """
+                    MATCH (seed:Paper)-[:MENTIONS]->(e1:Entity)-[rel]->(e2:Entity)<-[:MENTIONS]-(neighbor:Paper)
+                    WHERE seed.arxiv_id IN $seed_ids
+                    AND neighbor.arxiv_id NOT IN $seed_ids
+                    AND type(rel) IN ['RELATES_TO','USES','EVALUATED_ON','IMPROVES']
+                    WITH neighbor, count(DISTINCT e1) AS hop2_score
+                    RETURN neighbor.arxiv_id AS to_id, hop2_score
+                    ORDER BY hop2_score DESC
+                    LIMIT 10
+                    """,
+                    seed_ids=seed_arxiv_ids,
+                )
+                records2 = await result2.data()
+                for r in records2:
+                    to_id = r.get("to_id")
+                    if to_id and to_id not in all_ids:
+                        all_ids.append(to_id)
+                        edges.append({
+                            "source": seed_arxiv_ids[0],
+                            "target": to_id,
+                            "shared_concepts": ["multi-hop"],
+                            "weight": r.get("hop2_score", 1),
+                            "type": "hop2",
+                        })
+
+    except Exception as e:
+        logger.warning(f"Neo4j graph expansion failed: {e}")
+
+    return all_ids, edges
 
 
-# ── KG Retrieval ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Step 5: Chunk Hydration from Qdrant
+# ══════════════════════════════════════════════════════════════════════════════
 
-def kg_retrieve(
-    query: str,
+async def hydrate_chunks_from_qdrant(arxiv_ids: list[str], query: str, chunks_per_paper: int = 3) -> list[dict]:
+    """
+    Step 5: Given a list of arxiv_ids, fetch the most relevant text chunks
+    from Qdrant using dense-only search filtered to those papers.
+
+    This is the 'chunk hydration' step — we have identified the right papers
+    via the graph, now we get the actual text to pass to the LLM.
+    """
+    if not arxiv_ids:
+        return []
+
+    from rag.ingestion.embed import embed_query
+    from rag.search.hybrid import _get_client, QDRANT_COLLECTION
+
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchAny
+
+        client = _get_client()
+        if client is None:
+            return []
+
+        dense_vec = await embed_query(query)
+        arxiv_filter = Filter(must=[
+            FieldCondition(key="arxiv_id", match=MatchAny(any=arxiv_ids[:20]))
+        ])
+
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, lambda: client.query_points(
+            collection_name=QDRANT_COLLECTION,
+            query=dense_vec,
+            using="dense",
+            limit=len(arxiv_ids) * chunks_per_paper,
+            query_filter=arxiv_filter,
+            with_payload=True,
+        ))
+
+        chunks = []
+        seen_papers: dict[str, int] = {}
+        for point in results.points:
+            p = point.payload or {}
+            arxiv_id = p.get("arxiv_id", "")
+            if seen_papers.get(arxiv_id, 0) >= chunks_per_paper:
+                continue
+            seen_papers[arxiv_id] = seen_papers.get(arxiv_id, 0) + 1
+            chunks.append({
+                "chunk_id":     str(point.id),
+                "paper_id":     p.get("paper_id", f"arxiv:{arxiv_id}"),
+                "arxiv_id":     arxiv_id,
+                "title":        p.get("title", ""),
+                "authors":      p.get("authors", ""),
+                "year":         p.get("year", ""),
+                "tier":         p.get("tier", 0),
+                "text":         p.get("text", ""),
+                "excerpt":      p.get("text", "")[:300],
+                "hybrid_score": round(getattr(point, "score", 0) or 0, 4),
+                "rerank_score": None,
+                "source":       "kg_hydrated",
+            })
+
+        return chunks
+
+    except Exception as e:
+        logger.error(f"Chunk hydration failed: {e}")
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Main KG Retrieval Entry Point
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def kg_retrieve_v2(
+    query:        str,
+    api_key:      str,
+    top_k:        int = 20,
     selected_ids: list[str] | None = None,
-    top_k: int = 20,
 ) -> dict:
     """
-    Graph-enhanced retrieval:
-      1. Dense vector seed   → top-k papers from ChromaDB
-      2. Graph expansion     → add 1-hop neighbours of seed papers
-      3. Return all chunks from expanded paper set for reranking
+    Entity-centric Knowledge Graph RAG retrieval.
+
+    Pipeline:
+      1. Extract query entities (LLM)
+      2. Find anchor papers via Neo4j entity lookup
+      3. Dense seed retrieval (Qdrant)
+      4. Multi-hop expansion via entity graph (Neo4j)
+      5. Chunk hydration for all gathered papers (Qdrant)
+      6. Dedup + return for reranking
+
+    Falls back to dense-only Qdrant search if Neo4j is unavailable.
     """
-    from rag.pipeline import _get_collection, _rrf_fusion
-    from rag.pipeline import _rerank
+    # ── Step 1: Extract entities ──────────────────────────────────────────────
+    entities = await extract_query_entities(query, api_key)
+    logger.info(f"KG entities extracted: {entities}")
 
-    G = _get_graph()
-    col = _get_collection()
+    # ── Step 2: Entity → Paper via Neo4j ─────────────────────────────────────
+    entity_paper_ids = await entity_to_paper_ids_neo4j(entities)
+    logger.info(f"KG entity papers: {entity_paper_ids}")
 
-    if col is None:
-        return _empty_result()
+    # ── Step 3: Dense seed via Qdrant ─────────────────────────────────────────
+    from rag.search.hybrid import hybrid_search
+    seed_result = await hybrid_search(query, top_k=top_k, rerank=False)
+    dense_chunks  = seed_result.get("results", [])
+    seed_arxiv_ids = list({c["arxiv_id"] for c in dense_chunks if c.get("arxiv_id")})
 
-    where_filter = None
+    # ── Step 4: Multi-hop expansion via graph ─────────────────────────────────
+    # Merge entity-anchor papers with dense seeds for richer expansion base
+    anchor_ids = list(dict.fromkeys(entity_paper_ids + seed_arxiv_ids))[:15]
+    expanded_ids, graph_edges = await expand_papers_via_graph(anchor_ids, hops=2)
+
     if selected_ids:
-        if len(selected_ids) == 1:
-            where_filter = {"arxiv_id": selected_ids[0]}
-        else:
-            where_filter = {"arxiv_id": {"$in": selected_ids}}
+        expanded_ids = [i for i in expanded_ids if i in selected_ids] or expanded_ids
 
-    # ── Step 1: Dense seed retrieval ─────────────────────────────────────────
-    try:
-        n_results = min(top_k, col.count() or 1)
-        dense_res = col.query(
-            query_texts=[query],
-            n_results=n_results,
-            where=where_filter,
-            include=["documents", "metadatas", "distances"],
-        )
-    except Exception as e:
-        logger.error(f"KG dense retrieval failed: {e}")
-        return _empty_result()
+    # ── Step 5: Chunk hydration ───────────────────────────────────────────────
+    kg_chunks = await hydrate_chunks_from_qdrant(expanded_ids, query, chunks_per_paper=3)
 
-    docs  = dense_res["documents"][0] if dense_res["documents"] else []
-    metas = dense_res["metadatas"][0] if dense_res["metadatas"] else []
-    ids_  = dense_res["ids"][0]       if dense_res["ids"]       else []
-
-    seed_chunks: list[dict] = []
-    seed_paper_ids: set[str] = set()
-
-    for doc_id, text, meta in zip(ids_, docs, metas):
-        arxiv_id = meta.get("arxiv_id", doc_id)
-        seed_paper_ids.add(arxiv_id)
-        seed_chunks.append({
-            "id": doc_id,
-            "text": text,
-            "excerpt": text[:200].strip(),
-            "title": meta.get("title", "Unknown"),
-            "authors": meta.get("authors", ""),
-            "year": meta.get("year"),
-            "arxiv_id": arxiv_id,
-            "chunk_type": meta.get("chunk_type", "body"),
-            "source": "dense",
-        })
-
-    # ── Step 2: Graph neighbour expansion ────────────────────────────────────
-    expanded_paper_ids: set[str] = set(seed_paper_ids)
-    graph_edges_used: list[dict] = []
-    neighbour_chunks: list[dict] = []
-
-    if G is not None:
-        for paper_id in list(seed_paper_ids):
-            if paper_id not in G:
-                continue
-            neighbors = sorted(
-                G[paper_id].items(),
-                key=lambda kv: kv[1].get("weight", 0),
-                reverse=True,
-            )[:3]  # top-3 neighbours per seed
-
-            for neighbour_id, edge_data in neighbors:
-                if neighbour_id in expanded_paper_ids:
-                    continue
-                # Skip if selected_ids filter is active and neighbour is not in it
-                if selected_ids and neighbour_id not in selected_ids:
-                    continue
-
-                expanded_paper_ids.add(neighbour_id)
-                graph_edges_used.append({
-                    "from": paper_id,
-                    "to": neighbour_id,
-                    "weight": edge_data.get("weight", 1),
-                    "shared_topics": edge_data.get("shared_topics", []),
-                })
-
-                # Add chunks from this neighbour paper
-                for chunk in _chunk_index.get(neighbour_id, []):
-                    ch = dict(chunk)
-                    ch["source"] = "graph_expand"
-                    neighbour_chunks.append(ch)
-
-    # ── Combine + deduplicate ────────────────────────────────────────────────
-    seen_ids: set[str] = set()
+    # Merge: dense chunks + kg-hydrated chunks (deduplicated by chunk_id)
+    seen_chunk_ids: set[str] = set()
     all_chunks: list[dict] = []
-    for ch in seed_chunks + neighbour_chunks:
-        if ch["id"] not in seen_ids:
-            seen_ids.add(ch["id"])
-            all_chunks.append(ch)
+    for chunk in dense_chunks + kg_chunks:
+        if chunk["chunk_id"] not in seen_chunk_ids:
+            seen_chunk_ids.add(chunk["chunk_id"])
+            all_chunks.append(chunk)
 
-    # ── Build graph topology for UI ──────────────────────────────────────────
+    # ── Build graph topology for UI ───────────────────────────────────────────
     graph_nodes = []
-    graph_edges = []
-
-    if G is not None:
-        for pid in expanded_paper_ids:
-            meta = _paper_index.get(pid, {})
+    seen_arxiv: set[str] = set()
+    for chunk in all_chunks:
+        aid = chunk.get("arxiv_id", "")
+        if aid and aid not in seen_arxiv:
+            seen_arxiv.add(aid)
             graph_nodes.append({
-                "id": pid,
-                "title": meta.get("title", pid),
-                "year": meta.get("year", ""),
-                "category": meta.get("category", ""),
-                "is_seed": pid in seed_paper_ids,
+                "id":      aid,
+                "label":   chunk.get("title", aid)[:60],
+                "size":    12 if aid in seed_arxiv_ids else 8,
+                "color":   "#63b3ed" if aid in seed_arxiv_ids else "#9f7aea",
+                "is_seed": aid in seed_arxiv_ids,
+                "is_entity_anchor": aid in entity_paper_ids,
             })
-        for edge in graph_edges_used:
-            graph_edges.append(edge)
+
+    logger.info(
+        f"KG retrieve: {len(seed_arxiv_ids)} seed papers, "
+        f"{len(expanded_ids)} expanded, {len(all_chunks)} total chunks"
+    )
 
     return {
-        "chunks": all_chunks,
-        "seed_count": len(seed_paper_ids),
-        "expand_count": len(expanded_paper_ids) - len(seed_paper_ids),
-        "total_chunks": len(all_chunks),
-        "graph_nodes": graph_nodes,
-        "graph_edges": graph_edges,
-        # Also expose as hybrid-style keys for reuse in main.py
-        "all_fused": all_chunks,
-        "dense_count": len(seed_chunks),
-        "bm25_count": 0,
-        "fused_count": len(all_chunks),
-        "dense_top": seed_chunks[:5],
-        "bm25_top": [],
-        "fused_top": all_chunks[:5],
+        "chunks":           all_chunks,
+        "seed_count":       len(seed_arxiv_ids),
+        "expand_count":     len(expanded_ids) - len(seed_arxiv_ids),
+        "total_chunks":     len(all_chunks),
+        "entities":         entities,
+        "entity_papers":    entity_paper_ids,
+        "graph_nodes":      graph_nodes,
+        "graph_edges":      graph_edges,
+        # Alias keys for reuse in traces
+        "results":          all_chunks,
+        "dense_count":      len(seed_arxiv_ids),
+        "bm25_count":       0,
+        "fused_count":      len(all_chunks),
+        "fused_top":        all_chunks[:5],
     }
 
 
-def _empty_result() -> dict:
+# ══════════════════════════════════════════════════════════════════════════════
+# Legacy-compatible wrappers (for backward compat with main.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def kg_retrieve(query: str, selected_ids: list[str] | None = None, top_k: int = 20) -> dict:
+    """Sync wrapper for legacy compatibility — prefer kg_retrieve_v2 where possible."""
     return {
-        "chunks": [],
-        "seed_count": 0,
-        "expand_count": 0,
-        "total_chunks": 0,
-        "graph_nodes": [],
-        "graph_edges": [],
-        "all_fused": [],
-        "dense_count": 0,
-        "bm25_count": 0,
-        "fused_count": 0,
-        "dense_top": [],
-        "bm25_top": [],
-        "fused_top": [],
+        "chunks": [], "seed_count": 0, "expand_count": 0, "total_chunks": 0,
+        "graph_nodes": [], "graph_edges": [], "results": [],
+        "dense_count": 0, "bm25_count": 0, "fused_count": 0, "fused_top": [],
+        "error": "Use kg_retrieve_v2 (async) instead."
     }
 
-
-# ── Graph topology API ────────────────────────────────────────────────────────
 
 def get_graph_topology(limit_nodes: int = 50) -> dict:
-    """
-    Return a serialisable graph topology snapshot for the UI.
-    Returns top `limit_nodes` most-connected papers.
-    """
-    G = _get_graph()
-    if G is None or G.number_of_nodes() == 0:
+    """Return graph topology from Neo4j for the UI Explorer."""
+    import asyncio
+
+    async def _fetch():
+        driver = _get_neo4j_driver()
+        if not driver:
+            return {"nodes": [], "edges": [], "total_papers": 0, "total_edges": 0}
+        try:
+            async with driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (p:Paper)
+                    OPTIONAL MATCH (p)-[:MENTIONS]->(e:Entity)
+                    WITH p, count(e) AS entity_count
+                    ORDER BY entity_count DESC
+                    LIMIT $limit
+                    RETURN p.arxiv_id AS id, p.title AS title, entity_count
+                    """,
+                    limit=limit_nodes,
+                )
+                papers = await result.data()
+
+                edge_result = await session.run(
+                    """
+                    MATCH (p1:Paper)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(p2:Paper)
+                    WHERE id(p1) < id(p2)
+                    WITH p1, p2, count(e) AS shared, collect(e.name)[0..3] AS concepts
+                    WHERE shared >= 2
+                    RETURN p1.arxiv_id AS source, p2.arxiv_id AS target, shared, concepts
+                    LIMIT 100
+                    """
+                )
+                edges = await edge_result.data()
+
+            nodes = [
+                {
+                    "id":     p["id"],
+                    "label":  (p.get("title") or p["id"])[:60],
+                    "size":   min(20, 6 + p.get("entity_count", 0)),
+                    "color":  "#63b3ed",
+                }
+                for p in papers
+            ]
+            edge_list = [
+                {"source": e["source"], "target": e["target"],
+                 "weight": e["shared"], "shared_topics": e.get("concepts", [])}
+                for e in edges
+            ]
+            return {
+                "nodes": nodes,
+                "edges": edge_list,
+                "total_papers": len(nodes),
+                "total_edges": len(edge_list),
+            }
+        except Exception as ex:
+            logger.error(f"get_graph_topology failed: {ex}")
+            return {"nodes": [], "edges": [], "total_papers": 0, "total_edges": 0}
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Can't nest event loops — return a blank for now; caller should use async
+            return {"nodes": [], "edges": [], "total_papers": 0, "total_edges": 0}
+        return loop.run_until_complete(_fetch())
+    except Exception:
         return {"nodes": [], "edges": [], "total_papers": 0, "total_edges": 0}
-
-    # Pick top nodes by degree
-    degrees = dict(G.degree())
-    top_nodes = sorted(degrees, key=lambda n: degrees[n], reverse=True)[:limit_nodes]
-    top_set = set(top_nodes)
-
-    nodes = []
-    for nid in top_nodes:
-        meta = _paper_index.get(nid, {})
-        nodes.append({
-            "id": nid,
-            "title": meta.get("title", nid)[:80],
-            "year": meta.get("year", ""),
-            "category": meta.get("category", ""),
-            "degree": degrees.get(nid, 0),
-        })
-
-    edges = []
-    for a, b, data in G.edges(data=True):
-        if a in top_set and b in top_set:
-            edges.append({
-                "source": a,
-                "target": b,
-                "weight": data.get("weight", 1),
-                "shared_topics": data.get("shared_topics", [])[:5],
-            })
-
-    return {
-        "nodes": nodes,
-        "edges": edges,
-        "total_papers": G.number_of_nodes(),
-        "total_edges": G.number_of_edges(),
-    }
 
 
 def reset_graph():
-    """Force rebuild of the KG on next request."""
-    global _graph, _paper_index, _chunk_index
-    _graph = None
-    _paper_index = {}
-    _chunk_index = {}
-    logger.info("Knowledge graph cache cleared")
+    """No-op for compat — Neo4j is persistent, nothing to reset in memory."""
+    global _driver
+    _driver = None
+    logger.info("Neo4j driver cleared — will reconnect on next request")

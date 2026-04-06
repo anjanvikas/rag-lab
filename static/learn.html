@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Learn Hub — RAG Learning Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#050810;--bg2:#090d1a;--surface:rgba(255,255,255,.04);--surface-hover:rgba(255,255,255,.07);--border:rgba(255,255,255,.08);--accent:#63b3ed;--accent2:#9f7aea;--accent-glow:rgba(99,179,237,.15);--text:#e8edf5;--td:#8892a4;--tdm:#4a5568;--success:#68d391;--error:#fc8181;--warn:#f6ad55;--radius:12px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+.learn-layout{display:flex;height:100vh}
+/* ── Left Nav ── */
+.learn-nav{width:230px;min-width:230px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 0}
+.nav-back{display:flex;align-items:center;gap:8px;padding:8px 16px 20px;font-size:12.5px;color:var(--td);text-decoration:none;border-bottom:1px solid var(--border);margin-bottom:16px;transition:color .2s}
+.nav-back:hover{color:var(--accent)}
+.nav-brand{padding:0 16px 16px;font-size:15px;font-weight:700}
+.nav-brand span{font-size:11px;color:var(--td);font-weight:400;display:block;margin-top:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:13px;color:var(--td);cursor:pointer;border-radius:0;transition:all .15s;border-left:2px solid transparent}
+.nav-item:hover{background:var(--surface-hover);color:var(--text)}
+.nav-item.active{background:var(--accent-glow);color:var(--accent);border-left-color:var(--accent);font-weight:500}
+.nav-num{font-size:10px;margin-left:auto;opacity:.5}
+/* ── Center Content ── */
+.learn-content{flex:1;overflow-y:auto;padding:40px 48px}
+.learn-content::-webkit-scrollbar{width:4px}
+.learn-content::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.module-badge{font-size:11px;font-weight:600;letter-spacing:.8px;color:var(--accent);text-transform:uppercase;margin-bottom:12px}
+.module-title{font-size:32px;font-weight:700;letter-spacing:-.5px;margin-bottom:16px;line-height:1.2}
+.module-intro{font-size:15px;color:var(--td);line-height:1.8;margin-bottom:32px;max-width:640px}
+.concept-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;margin-bottom:16px}
+.concept-card h3{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.concept-card p{font-size:13.5px;color:var(--td);line-height:1.75}
+.concept-card code{font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px;font-size:12px;color:#a8d8ea}
+.callout{background:rgba(99,179,237,.06);border:1px solid rgba(99,179,237,.2);border-radius:var(--radius);padding:16px 20px;margin:20px 0}
+.callout .callout-title{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--accent);text-transform:uppercase;margin-bottom:8px}
+.callout p{font-size:13px;color:var(--td);line-height:1.7}
+.section-label{font-size:11px;font-weight:600;letter-spacing:.6px;color:var(--tdm);text-transform:uppercase;margin:28px 0 12px}
+.pipeline-flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0 24px}
+.flow-step{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500}
+.flow-arrow{color:var(--tdm);font-size:14px}
+/* ── Right Panel ── */
+.learn-panel{width:340px;min-width:340px;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.panel-header{padding:16px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600}
+.panel-header span{font-size:11px;color:var(--td);font-weight:400;display:block;margin-top:2px}
+.panel-body{flex:1;overflow-y:auto;padding:16px}
+.panel-body::-webkit-scrollbar{width:3px}
+.panel-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.live-badge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;color:var(--accent);letter-spacing:.4px;text-transform:uppercase;margin-bottom:12px}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:pulse-dot 1.5s infinite}
+select,input[type=text]{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:12.5px;font-family:inherit;outline:none;margin-bottom:10px}
+select:focus,input[type=text]:focus{border-color:var(--accent)}
+textarea.demo-text{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:12.5px;font-family:inherit;outline:none;resize:vertical;min-height:90px;margin-bottom:10px}
+.demo-btn{width:100%;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;margin-bottom:12px}
+.demo-btn:hover{opacity:.9;transform:translateY(-1px)}
+.demo-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.stat-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center}
+.stat-val{font-size:20px;font-weight:700;color:var(--accent)}
+.stat-label{font-size:10px;color:var(--td);margin-top:2px}
+.heatmap{display:flex;flex-wrap:wrap;gap:2px;margin-bottom:8px}
+.hm-cell{width:12px;height:12px;border-radius:2px}
+.chunk-block{border-radius:8px;padding:10px 12px;margin-bottom:6px;font-size:12px;line-height:1.5;position:relative}
+.chunk-meta{font-size:10px;opacity:.6;margin-top:4px}
+.slider-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.slider-row label{font-size:12px;color:var(--td);min-width:80px}
+.slider-row input[type=range]{flex:1}
+.slider-val{font-size:12px;color:var(--text);font-family:'JetBrains Mono',monospace;min-width:36px;text-align:right}
+.panel-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:30px;color:var(--td)}
+.panel-placeholder .ph-icon{font-size:48px;margin-bottom:16px;opacity:.4}
+.panel-placeholder p{font-size:13px;line-height:1.7}
+.pipeline-steps{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.p-step{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:12px;transition:all .3s}
+.p-step.active{background:rgba(99,179,237,.1);border-color:rgba(99,179,237,.3);color:var(--accent)}
+.p-step.done{background:rgba(104,211,145,.06);border-color:rgba(104,211,145,.2);color:var(--success)}
+.p-step-icon{font-size:16px;flex-shrink:0}
+.error-banner{background:rgba(252,129,129,.08);border:1px solid rgba(252,129,129,.2);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--error);margin-bottom:10px}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div class="learn-layout">
+  <!-- Left Nav -->
+  <nav class="learn-nav">
+    <a href="/" class="nav-back">← Back to Chat</a>
+    <div class="nav-brand">📚 Learn Hub<span>RAG from the ground up</span></div>
+    <div class="nav-item active" onclick="showModule('intro')">🌐 What is RAG? <span class="nav-num">01</span></div>
+    <div class="nav-item" onclick="showModule('embed')">📊 Embeddings <span class="nav-num">02</span></div>
+    <div class="nav-item" onclick="showModule('chunk')">✂️ Chunking <span class="nav-num">03</span></div>
+    <div class="nav-item" onclick="showModule('vectordb')">🗄️ Vector Databases <span class="nav-num">04</span></div>
+    <div class="nav-item" onclick="showModule('retrieval')">🔍 Retrieval & Reranking <span class="nav-num">05</span></div>
+    <div class="nav-item" onclick="showModule('llm')">🤖 LLMs & Generation <span class="nav-num">06</span></div>
+    <div class="nav-item" onclick="showModule('pipeline')">⚡ Full Pipeline <span class="nav-num">07</span></div>
+  </nav>
+
+  <!-- Center Content -->
+  <div class="learn-content" id="learn-content">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- Right Panel -->
+  <div class="learn-panel">
+    <div class="panel-header" id="panel-header">Interactive Demo<span id="panel-sub">Select a module to start</span></div>
+    <div class="panel-body" id="panel-body">
+      <div class="panel-placeholder">
+        <div class="ph-icon">🎮</div>
+        <p>Navigate to <strong>Embeddings</strong>, <strong>Chunking</strong>, or <strong>Full Pipeline</strong> to see live, server-backed demos here.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MODULES = {
+  intro: {
+    badge:'MODULE 1 — INTRODUCTION',title:'Retrieval-Augmented Generation',
+    html:`
+      <p class="module-intro">LLMs are powerful but their knowledge is frozen at training time. RAG fixes this by letting the model search a private knowledge base before answering — grounding every response in real documents.</p>
+      <div class="section-label">The Core Problem</div>
+      <div class="concept-card"><h3>🧊 The Knowledge Freeze</h3><p>A language model knows nothing beyond its training cutoff. Worse, it <strong>hallucinates</strong> — confidently generating false facts. For specialized domains (your papers, your docs) it's even worse: the model may have never seen that data.</p></div>
+      <div class="concept-card"><h3>🔍 The RAG Solution</h3><p>RAG splits the problem: <strong>retrieve</strong> relevant chunks → <strong>generate</strong> an answer grounded in those chunks. The model is instructed: <em>"Use ONLY this context. If the answer isn't here, say so."</em> Hallucination on in-context facts is effectively eliminated.</p></div>
+      <div class="section-label">End-to-End Pipeline</div>
+      <div class="pipeline-flow">
+        <div class="flow-step">📄 Query</div><div class="flow-arrow">→</div>
+        <div class="flow-step">📊 Embed</div><div class="flow-arrow">→</div>
+        <div class="flow-step">🗄️ Retrieve</div><div class="flow-arrow">→</div>
+        <div class="flow-step">🎯 Rerank</div><div class="flow-arrow">→</div>
+        <div class="flow-step">💬 Prompt</div><div class="flow-arrow">→</div>
+        <div class="flow-step">✨ Answer</div>
+      </div>
+      <div class="callout"><div class="callout-title">Why it works</div><p>The LLM's job changes from "know everything" to "read and summarize this passage." Reading comprehension is something LLMs are excellent at — hallucination vanishes.</p></div>
+    `
+  },
+  embed: {
+    badge:'MODULE 2 — CORE CONCEPT',title:'What are Embeddings?',
+    html:`
+      <p class="module-intro">An embedding is a list of numbers representing the <em>meaning</em> of text. Similar texts get similar numbers. This is what enables semantic search — finding relevant passages even when the exact words don't match.</p>
+      <div class="concept-card"><h3>📍 Text as Points in Space</h3><p>Imagine a vast multi-dimensional space. Each text is a point. <strong>"dog"</strong>, <strong>"puppy"</strong>, <strong>"canine"</strong> cluster together. <strong>"cat"</strong> is nearby (both pets). <strong>"car"</strong> is far away. Distance = semantic difference. That's why semantic search finds relevant text even when terminology differs.</p></div>
+      <div class="concept-card"><h3>⚙️ How They're Made</h3><p>Embedding models (like <code>all-MiniLM-L6-v2</code>) are transformers trained with <strong>contrastive learning</strong>: similar sentences are pushed together in vector space, different ones pushed apart. The raw numbers are meaningless — only relative distances matter.</p></div>
+      <div class="callout"><div class="callout-title">Why it works</div><p>Transformers process all tokens simultaneously via self-attention. The final output vector encodes <strong>context + meaning</strong>: "bank" (river) and "bank" (money) produce very different vectors despite identical spelling. This context-sensitivity makes embedding search vastly more powerful than keyword matching.</p></div>
+      <div class="section-label">Use the demo →</div>
+      <p style="color:var(--td);font-size:13px">Select any embedding model in the right panel, enter text, and see a real 384-dimensional vector generated live from the server — visualized as a color heatmap.</p>
+    `
+  },
+  chunk: {
+    badge:'MODULE 3 — PREPROCESSING',title:'Chunking: Splitting Documents',
+    html:`
+      <p class="module-intro">You can't embed a 20-page paper as one vector. Chunking breaks documents into overlapping pieces before embedding. Chunk size and overlap are critical hyperparameters with measurable impact on retrieval quality.</p>
+      <div class="concept-card"><h3>📐 The Goldilocks Problem</h3><p><strong>Too small (100 chars):</strong> Each chunk lacks context. Retrieval returns fragments.<br/><strong>Too large (5000 chars):</strong> One vector encodes too many ideas — gets diluted. The answer might be in a 4000-char chunk but buried on line 80.<br/><strong>Just right (500–1000 chars):</strong> One coherent idea per chunk. This app uses <code>chunk_size=1000, overlap=150</code>.</p></div>
+      <div class="concept-card"><h3>🔗 Why Overlap?</h3><p>Answers often span chunk boundaries. An overlap of 150 chars means the end of one chunk is repeated at the start of the next — ensuring sentences at boundaries appear fully in at least one chunk.</p></div>
+      <div class="section-label">Chunking Strategies</div>
+      <div class="concept-card"><h3>📄 RecursiveCharacterTextSplitter (default)</h3><p>Tries to split on <code>\n\n</code>, then <code>\n</code>, then <code>.</code>, then spaces. Keeps semantically coherent units together. Paragraph breaks are natural topic boundaries — this strategy respects them.</p></div>
+      <div class="concept-card"><h3>📝 Sentence-aware</h3><p>Splits specifically on sentence terminators (<code>. ! ?</code>). Ensures chunks never cut mid-sentence. Best when your documents have well-formed prose.</p></div>
+      <div class="callout"><div class="callout-title">Why it works</div><p>Each chunk maps to one vector. Retrieval finds the most relevant chunks, not documents. If chunk size matches "one concept," retrieval becomes precise. Large chunks dilute the embedding and hurt precision.</p></div>
+    `
+  },
+  vectordb: {
+    badge:'MODULE 4 — STORAGE',title:'Vector Databases',
+    html:`
+      <p class="module-intro">A vector database stores millions of embedding vectors and finds the nearest neighbors to a query vector in milliseconds. This is the "search engine" of RAG.</p>
+      <div class="concept-card"><h3>🔍 Approximate Nearest Neighbor (ANN)</h3><p>Exact search over millions of vectors would take seconds. ANN algorithms (HNSW, IVF) build index structures that find the <em>approximate</em> top-k matches in milliseconds. This app uses <strong>ChromaDB</strong> with HNSW indexing.</p></div>
+      <div class="concept-card"><h3>🗄️ ChromaDB</h3><p>ChromaDB is an open-source, embedded vector database. It runs in-process — no separate server needed. Vectors are persisted to disk (SQLite + raw files). Perfect for development and single-machine production deployments.</p></div>
+      <div class="concept-card"><h3>📊 Distance Metrics</h3><p>Cosine similarity measures the angle between two vectors (ignores magnitude). L2/Euclidean measures absolute distance. For text embeddings, <strong>cosine similarity</strong> is standard — it captures directional similarity regardless of vector length.</p></div>
+      <div class="callout"><div class="callout-title">Why it works</div><p>HNSW builds a hierarchical graph of vectors. Search navigates the graph greedily — each hop moves closer to the query. O(log n) search complexity instead of O(n). This makes billion-scale vector search feasible.</p></div>
+    `
+  },
+  retrieval: {
+    badge:'MODULE 5 — RETRIEVAL',title:'Retrieval & Reranking',
+    html:`
+      <p class="module-intro">This app uses a 3-stage retrieval pipeline: Dense (vector) search → BM25 (keyword) search → RRF fusion → Cross-encoder reranking. Each stage compensates for weaknesses in the previous one.</p>
+      <div class="concept-card"><h3>⚡ Dense Retrieval</h3><p>Embed the query → find nearest vectors in ChromaDB. Fast, semantic. Weakness: can miss exact keyword matches (e.g., rare technical terms, paper IDs).</p></div>
+      <div class="concept-card"><h3>📝 BM25 (Keyword)</h3><p>Classic TF-IDF with saturation and length normalization. Excellent for exact term matching. Weakness: no semantic understanding — "car" and "automobile" are different tokens.</p></div>
+      <div class="concept-card"><h3>🔀 RRF Fusion</h3><p>Reciprocal Rank Fusion combines both lists: score = Σ 1/(k + rank). Documents appearing in both lists get boosted. k=60 prevents top-ranked documents from dominating. Simple, parameter-free, surprisingly effective.</p></div>
+      <div class="concept-card"><h3>🎯 Cross-Encoder Reranking</h3><p>Dense retrieval gets top-20 candidates. Cross-encoder reads (query, passage) together — full attention between them — and scores relevance 0–1. Much more accurate than bi-encoder similarity but too slow for full corpus. Used only on the top-20 shortlist.</p></div>
+      <div class="callout"><div class="callout-title">Why it works</div><p>Each stage is best-of-breed for a different task. Dense + BM25 + RRF maximizes recall (find all relevant docs). Cross-encoder maximizes precision (rank the best ones first). The pipeline gets both: high recall AND high precision.</p></div>
+    `
+  },
+  llm: {
+    badge:'MODULE 6 — GENERATION',title:'LLMs & Answer Generation',
+    html:`
+      <p class="module-intro">After retrieval, the top chunks are assembled into a prompt and sent to Claude. This app uses smart model selection — choosing between Haiku (fast) and Sonnet (capable) based on query complexity.</p>
+      <div class="concept-card"><h3>📋 Prompt Engineering</h3><p>The system prompt instructs the model: <em>"Answer using ONLY the provided research paper excerpts. Cite papers by number [1], [2]. If the answer isn't in the context, say so clearly."</em> This tight instruction is what eliminates hallucination.</p></div>
+      <div class="concept-card"><h3>⚡ Model Selection</h3><p>Short queries (≤20 words) → <strong>Claude Haiku</strong> (faster, cheaper). Long/complex queries → <strong>Claude Sonnet</strong> (more capable). The model selection decision itself is traced and visible in the Pipeline panel.</p></div>
+      <div class="concept-card"><h3>🌊 Streaming</h3><p>Claude's response streams token by token via Server-Sent Events. The frontend renders tokens as they arrive. Between tokens from Claude, the backend inserts pipeline trace events (<code>step:</code>, <code>trace:</code>) on the same SSE stream.</p></div>
+      <div class="callout"><div class="callout-title">Query Rewriting</div><p>Before retrieval, Haiku rewrites the query into a retrieval-optimized form — expanding abbreviations, adding technical context, removing stop words. This step alone improves retrieval recall by ~15%.</p></div>
+    `
+  },
+  pipeline: {
+    badge:'MODULE 7 — FULL SYSTEM',title:'The Complete RAG Pipeline',
+    html:`
+      <p class="module-intro">All pieces together: query rewriting → hybrid retrieval → RRF fusion → cross-encoder reranking → prompt assembly → streaming generation. Click "Trace Pipeline" in the right panel to watch it animated step by step.</p>
+      <div class="pipeline-flow">
+        <div class="flow-step">💬 Query</div><div class="flow-arrow">→</div>
+        <div class="flow-step">✏️ Rewrite</div><div class="flow-arrow">→</div>
+        <div class="flow-step">⚡ Dense</div><div class="flow-arrow">→</div>
+        <div class="flow-step">📝 BM25</div><div class="flow-arrow">→</div>
+        <div class="flow-step">🔀 RRF</div><div class="flow-arrow">→</div>
+        <div class="flow-step">🎯 Rerank</div><div class="flow-arrow">→</div>
+        <div class="flow-step">✨ Answer</div>
+      </div>
+      <div class="concept-card"><h3>📊 Observability with Langfuse</h3><p>Every query creates a trace in Langfuse: nested spans for rewrite, retrieval, reranking, generation. Latency, token usage, and costs are all tracked. User feedback (👍/👎) creates scores linked to the trace.</p></div>
+      <div class="concept-card"><h3>🔐 Per-User API Keys</h3><p>API keys are stored encrypted with Fernet (AES-128-CBC) in SQLite. The encryption key lives in the environment variable <code>ENCRYPTION_KEY</code>. Keys are decrypted in memory only when needed for the LLM call — never logged or exposed.</p></div>
+      <div class="callout"><div class="callout-title">Production Considerations</div><p>For production: use a persistent volume for ChromaDB + SQLite, set up HTTPS (Caddy/nginx), configure Google OAuth redirect URIs, rotate <code>SECRET_KEY</code> and <code>ENCRYPTION_KEY</code> securely.</p></div>
+    `
+  }
+};
+
+let currentModule = 'intro';
+
+function showModule(name) {
+  currentModule = name;
+  const mod = MODULES[name];
+
+  // Update nav
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('onclick') === `showModule('${name}')`);
+  });
+
+  // Update content
+  document.getElementById('learn-content').innerHTML = `
+    <div style="animation:fadeIn .3s ease">
+      <div class="module-badge">${mod.badge}</div>
+      <div class="module-title">${mod.title}</div>
+      ${mod.html}
+    </div>
+  `;
+
+  // Update right panel
+  updatePanel(name);
+}
+
+function setPanel(title, subtitle) {
+  document.getElementById('panel-header').innerHTML = title + '<span id="panel-sub">' + subtitle + '</span>';
+}
+
+function updatePanel(name) {
+  const body = document.getElementById('panel-body');
+
+  if (name === 'embed') {
+    setPanel('📊 Embedding Explorer', 'Generate real vectors from the server');
+    body.innerHTML = `
+      <div class="live-badge"><span class="live-dot"></span> LIVE DEMO</div>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Choose Embedding Model</label>
+      <select id="emb-model">
+        <option value="all-MiniLM-L6-v2">all-MiniLM-L6-v2 · 384 dims · fast</option>
+        <option value="all-mpnet-base-v2">all-mpnet-base-v2 · 768 dims · accurate</option>
+        <option value="paraphrase-MiniLM-L3-v2">paraphrase-MiniLM-L3-v2 · 384 dims · tiny</option>
+        <option value="multi-qa-MiniLM-L6-cos-v1">multi-qa-MiniLM-L6-cos-v1 · 384 dims · QA</option>
+      </select>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Input Text (max 500 chars)</label>
+      <textarea class="demo-text" id="emb-text" maxlength="500">The transformer uses multi-head self-attention to capture long-range dependencies.</textarea>
+      <button class="demo-btn" id="emb-btn" onclick="runEmbed()">Generate Real Embedding</button>
+      <div id="emb-result"></div>
+    `;
+  } else if (name === 'chunk') {
+    setPanel('✂️ Chunking Playground', 'Real server-side chunking with langchain');
+    body.innerHTML = `
+      <div class="live-badge"><span class="live-dot"></span> LIVE DEMO</div>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Chunking Strategy</label>
+      <select id="chunk-strategy">
+        <option value="recursive">♻ Recursive (paragraph → sentence → word)</option>
+        <option value="sentence">📝 Sentence-aware</option>
+        <option value="character">🔤 Character</option>
+      </select>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Your Text</label>
+      <textarea class="demo-text" id="chunk-text" style="min-height:80px">The transformer architecture revolutionized NLP by replacing recurrent networks with self-attention. BERT extended this by training bidirectionally on masked language modeling. GPT models instead use a causal attention pattern, optimizing for text generation. These two paradigms — encoder vs decoder — underpin most modern language models.</textarea>
+      <div class="slider-row">
+        <label>Chunk Size</label>
+        <input type="range" id="chunk-size" min="50" max="600" value="200" oninput="document.getElementById('chunk-size-val').textContent=this.value"/>
+        <span class="slider-val" id="chunk-size-val">200</span>
+      </div>
+      <div class="slider-row">
+        <label>Overlap</label>
+        <input type="range" id="chunk-overlap" min="0" max="100" value="30" oninput="document.getElementById('chunk-overlap-val').textContent=this.value"/>
+        <span class="slider-val" id="chunk-overlap-val">30</span>
+      </div>
+      <button class="demo-btn" id="chunk-btn" onclick="runChunk()">Generate Real Chunks</button>
+      <div id="chunk-result"></div>
+    `;
+  } else if (name === 'pipeline') {
+    setPanel('⚡ Pipeline Tracer', 'Watch the pipeline animate step-by-step');
+    body.innerHTML = `
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Sample query</label>
+      <input type="text" id="trace-query" value="What is multi-head attention?"/>
+      <button class="demo-btn" onclick="runTrace()" id="trace-btn">▶ Trace Pipeline</button>
+      <div class="pipeline-steps" id="trace-steps">
+        ${['Query Received','Query Rewriting (Haiku)','Dense Retrieval (ChromaDB)','BM25 Retrieval','RRF Fusion','Cross-encoder Reranking','Answer Generation (Claude)']
+          .map((s,i)=>`<div class="p-step" id="ps-${i}"><span class="p-step-icon">${['💬','✏️','⚡','📝','🔀','🎯','✨'][i]}</span>${s}</div>`).join('')}
+      </div>
+    `;
+  } else if (name === 'vectordb') {
+    setPanel('🗄️ Cosine Similarity', 'Calculate similarity between two texts');
+    body.innerHTML = `
+      <div class="live-badge"><span class="live-dot" style="background:var(--accent2)"></span> CLIENT-SIDE</div>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Text A</label>
+      <textarea class="demo-text" id="cos-a" style="min-height:60px">The cat sat on the mat</textarea>
+      <label style="font-size:12px;color:var(--td);display:block;margin-bottom:4px">Text B</label>
+      <textarea class="demo-text" id="cos-b" style="min-height:60px">A dog rested on the floor</textarea>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;text-align:center;margin-top:8px">
+        <div style="font-size:11px;color:var(--td);margin-bottom:8px">Jaccard Word Overlap (approx)</div>
+        <div id="cos-result" style="font-size:36px;font-weight:700;color:var(--accent)">—</div>
+        <div style="font-size:11px;color:var(--td);margin-top:4px">0.0 = no overlap · 1.0 = identical</div>
+      </div>
+      <button class="demo-btn" style="margin-top:12px" onclick="runCosine()">Calculate</button>
+    `;
+  } else {
+    setPanel('Interactive Demo', 'Navigate to a module with a live demo');
+    body.innerHTML = `
+      <div class="panel-placeholder">
+        <div class="ph-icon">🎮</div>
+        <p>Navigate to <strong>Embeddings</strong>, <strong>Chunking</strong>, <strong>Vector DBs</strong>, or <strong>Full Pipeline</strong> to see live demos here.</p>
+      </div>
+    `;
+  }
+}
+
+// ── API calls ─────────────────────────────────────────────────
+async function runEmbed() {
+  const btn = document.getElementById('emb-btn');
+  const text = document.getElementById('emb-text').value.trim();
+  const model = document.getElementById('emb-model').value;
+  const result = document.getElementById('emb-result');
+  if (!text) return;
+  btn.disabled = true; btn.textContent = 'Generating…';
+  result.innerHTML = '';
+  try {
+    const res = await fetch('/api/learn/embed', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text, model})
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const vec = data.vector;
+    const min = Math.min(...vec), max = Math.max(...vec);
+    let html = `<div class="stat-grid">
+      <div class="stat-box"><div class="stat-val">${data.dimensions}</div><div class="stat-label">Dimensions</div></div>
+      <div class="stat-box"><div class="stat-val">${vec.filter(v=>v!==0).length}</div><div class="stat-label">Non-zero dims</div></div>
+      <div class="stat-box"><div class="stat-val" style="font-size:16px">${min.toFixed(3)}</div><div class="stat-label">Min value</div></div>
+      <div class="stat-box"><div class="stat-val" style="font-size:16px">${max.toFixed(3)}</div><div class="stat-label">Max value</div></div>
+    </div>
+    <div style="font-size:10px;color:var(--td);margin-bottom:6px">Vector Heatmap (each cell = one dimension)</div>
+    <div style="font-size:9px;color:var(--td);margin-bottom:4px;display:flex;justify-content:space-between"><span style="color:#7b5ea7">■ negative</span><span style="color:#63b3ed">■ positive</span></div>
+    <div class="heatmap" id="hm">`;
+    const show = Math.min(vec.length, 256);
+    for (let i=0;i<show;i++) {
+      const v = (vec[i]-min)/(max-min);
+      const r = Math.round(100*(1-v)+60*v);
+      const g = Math.round(80*(1-v)+120*v);
+      const b = Math.round(180*(1-v)+237*v);
+      html += `<div class="hm-cell" style="background:rgb(${r},${g},${b})" title="dim ${i}: ${vec[i].toFixed(4)}"></div>`;
+    }
+    html += `</div><div style="font-size:10px;color:var(--td);margin-top:6px">First 8 values: [${vec.slice(0,8).map(v=>v.toFixed(3)).join(', ')}…]</div>`;
+    result.innerHTML = html;
+  } catch(e) {
+    result.innerHTML = `<div class="error-banner">Error: ${e.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Generate Real Embedding';
+}
+
+async function runChunk() {
+  const btn = document.getElementById('chunk-btn');
+  const text = document.getElementById('chunk-text').value.trim();
+  const strategy = document.getElementById('chunk-strategy').value;
+  const chunk_size = parseInt(document.getElementById('chunk-size').value);
+  const chunk_overlap = parseInt(document.getElementById('chunk-overlap').value);
+  const result = document.getElementById('chunk-result');
+  if (!text) return;
+  btn.disabled = true; btn.textContent = 'Chunking…';
+  result.innerHTML = '';
+  try {
+    const res = await fetch('/api/learn/chunk', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text, strategy, chunk_size, chunk_overlap})
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const colors = ['rgba(99,179,237,.15)','rgba(159,122,234,.15)','rgba(104,211,145,.15)','rgba(246,173,85,.15)','rgba(252,129,129,.15)'];
+    const borders = ['rgba(99,179,237,.3)','rgba(159,122,234,.3)','rgba(104,211,145,.3)','rgba(246,173,85,.3)','rgba(252,129,129,.3)'];
+    let html = `<div class="stat-grid" style="margin-bottom:12px">
+      <div class="stat-box"><div class="stat-val">${data.count}</div><div class="stat-label">Chunks</div></div>
+      <div class="stat-box"><div class="stat-val">${chunk_size}</div><div class="stat-label">Max size</div></div>
+    </div>`;
+    data.chunks.forEach((chunk, i) => {
+      const ci = i % colors.length;
+      html += `<div class="chunk-block" style="background:${colors[ci]};border:1px solid ${borders[ci]}">
+        ${chunk}
+        <div class="chunk-meta">Chunk ${i+1} · ${chunk.length} chars</div>
+      </div>`;
+    });
+    result.innerHTML = html;
+  } catch(e) {
+    result.innerHTML = `<div class="error-banner">Error: ${e.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Generate Real Chunks';
+}
+
+function runCosine() {
+  const a = document.getElementById('cos-a').value.toLowerCase().split(/\W+/).filter(Boolean);
+  const b = document.getElementById('cos-b').value.toLowerCase().split(/\W+/).filter(Boolean);
+  const sa = new Set(a), sb = new Set(b);
+  const intersection = [...sa].filter(w=>sb.has(w)).length;
+  const union = new Set([...sa,...sb]).size;
+  const sim = union===0 ? 0 : intersection/union;
+  document.getElementById('cos-result').textContent = sim.toFixed(3);
+}
+
+async function runTrace() {
+  const btn = document.getElementById('trace-btn');
+  btn.disabled = true; btn.textContent = 'Running…';
+  const steps = 7;
+  for (let i=0;i<steps;i++) {
+    document.querySelectorAll('.p-step').forEach((el,j)=>{
+      el.className = 'p-step' + (j<i?' done':j===i?' active':'');
+    });
+    await new Promise(r=>setTimeout(r,700));
+  }
+  document.querySelectorAll('.p-step').forEach(el=>el.classList.add('done'));
+  btn.disabled = false; btn.textContent = '▶ Trace Pipeline';
+}
+
+// Init
+showModule('intro');
+</script>
+</body>
+</html>

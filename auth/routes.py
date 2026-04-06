@@ -60,6 +60,24 @@ def require_auth(request: Request) -> dict:
 @router.get("/login")
 async def login(request: Request):
     """Redirect to Google OAuth."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            """<html><body style="font-family:sans-serif;background:#0f1117;color:#e4e6f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+            <div style="text-align:center;padding:40px;background:#1a1d27;border-radius:16px;max-width:480px">
+            <h2 style="color:#fc8181;margin-bottom:12px">&#9888; Google OAuth Not Configured</h2>
+            <p style="color:#8892a4;line-height:1.6;margin-bottom:16px">
+              <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> are missing from <code>.env</code>.
+            </p>
+            <p style="color:#8892a4;font-size:13px">
+              1. Go to <a href="https://console.cloud.google.com/" style="color:#63b3ed" target="_blank">console.cloud.google.com</a><br/>
+              2. Create a project &rarr; OAuth 2.0 Client ID (Web Application)<br/>
+              3. Add <code>http://localhost:8000/auth/callback</code> as redirect URI<br/>
+              4. Paste the credentials into <code>.env</code> and restart
+            </p>
+            </div></body></html>""",
+            status_code=503,
+        )
     redirect_uri = str(request.base_url) + "auth/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
